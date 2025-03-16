@@ -52,6 +52,7 @@ def retrieve_memory(query: str, n_results: int = 3) -> str:
         count = 0
     if count == 0:
         return ""
+    # Request no more than available documents.
     k = min(n_results, count)
     try:
         results = collection.query(

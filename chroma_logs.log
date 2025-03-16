@@ -1163,3 +1163,35 @@ DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
 DEBUG:Chroma:Logger created
 DEBUG:Chroma:time to pre process our knn query: 3.814697265625e-06
 DEBUG:Chroma:time to run knn query: 0.0002639293670654297
+DEBUG:Chroma:Logger created
+DEBUG:Chroma:time to pre process our knn query: 5.0067901611328125e-06
+DEBUG:Chroma:time to run knn query: 0.0002830028533935547
+DEBUG:Chroma:Logger created
+DEBUG:Chroma:time to pre process our knn query: 3.0994415283203125e-06
+DEBUG:Chroma:time to run knn query: 0.00023603439331054688
+DEBUG:Chroma:Logger created
+DEBUG:Chroma:time to pre process our knn query: 2.86102294921875e-06
+DEBUG:Chroma:time to run knn query: 0.00021195411682128906
+DEBUG:Chroma:time to pre process our knn query: 5.9604644775390625e-06
+DEBUG:Chroma:time to run knn query: 0.00010704994201660156
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:time to pre process our knn query: 5.245208740234375e-06
+DEBUG:Chroma:time to run knn query: 0.00011205673217773438
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:time to pre process our knn query: 1.9311904907226562e-05
+DEBUG:Chroma:time to run knn query: 0.0005400180816650391
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:time to pre process our knn query: 9.059906005859375e-06
+DEBUG:Chroma:time to run knn query: 0.00013113021850585938
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:Logger created
+DEBUG:Chroma:time to pre process our knn query: 4.0531158447265625e-06
+DEBUG:Chroma:time to run knn query: 0.0002930164337158203
+DEBUG:Chroma:time to pre process our knn query: 9.059906005859375e-06
+DEBUG:Chroma:time to run knn query: 8.916854858398438e-05
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
+DEBUG:Chroma:Index saved to {self._save_folder}/index.bin
