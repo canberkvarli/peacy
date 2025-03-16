@@ -1,9 +1,12 @@
 import os
 import uuid
+import logging
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from config import CHROMA_PERSIST_DIRECTORY
+
+logger = logging.getLogger(__name__)
 
 # Load a SentenceTransformer model for embedding generation.
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -11,7 +14,7 @@ embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 # Ensure the persistence directory exists.
 os.makedirs(CHROMA_PERSIST_DIRECTORY, exist_ok=True)
 
-# Initialize a Chroma client (using duckdb+parquet for persistence).
+# Initialize a Chroma client with persistence.
 client = chromadb.Client(
     Settings(chroma_db_impl="duckdb+parquet", persist_directory=CHROMA_PERSIST_DIRECTORY)
 )
@@ -25,7 +28,6 @@ def get_or_create_collection(name: str):
             return client.get_collection(name=name)
     logger.info(f"Creating new collection: {name}")
     return client.create_collection(name=name)
-
 
 collection = get_or_create_collection("peacy_memories")
 
@@ -50,7 +52,6 @@ def retrieve_memory(query: str, n_results: int = 3) -> str:
         count = 0
     if count == 0:
         return ""
-    # Request no more than available documents.
     k = min(n_results, count)
     try:
         results = collection.query(
@@ -61,7 +62,7 @@ def retrieve_memory(query: str, n_results: int = 3) -> str:
             return ""
         return "\n".join(results["documents"][0])
     except Exception as e:
-        print("Error during memory retrieval:", e)
+        logger.exception("Error during memory retrieval:")
         return ""
 
 def seed_memory():
