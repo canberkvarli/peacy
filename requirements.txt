@@ -1,0 +1,8 @@
+python-telegram-bot==13.15
+openai
+chromadb
+psycopg2-binary
+sentence_transformers
+APScheduler
+rich
+python-dotenv
