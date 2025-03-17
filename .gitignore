@@ -1,0 +1,12 @@
+# Python cache
+__pycache__/
+
+# Virtual environment
+venv/
+
+# ChromaDB folders and logs
+/chroma_db
+/chroma_logs.log
+
+# Sensitive configuration (API keys)
+config.py
