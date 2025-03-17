@@ -8,13 +8,13 @@ from config import CHROMA_PERSIST_DIRECTORY
 
 logger = logging.getLogger(__name__)
 
-# Load a SentenceTransformer model for embedding generation.
+# Load the embedding model.
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Ensure the persistence directory exists.
 os.makedirs(CHROMA_PERSIST_DIRECTORY, exist_ok=True)
 
-# Initialize a Chroma client with persistence.
+# Initialize the Chroma client with persistence.
 client = chromadb.Client(
     Settings(chroma_db_impl="duckdb+parquet", persist_directory=CHROMA_PERSIST_DIRECTORY)
 )
@@ -52,7 +52,6 @@ def retrieve_memory(query: str, n_results: int = 3) -> str:
         count = 0
     if count == 0:
         return ""
-    # Request no more than available documents.
     k = min(n_results, count)
     try:
         results = collection.query(
@@ -71,7 +70,8 @@ def seed_memory():
         "Peacy is a compassionate AI mediator built for group chats. "
         "It fosters peaceful communication and helps build genuine relationships through Nonviolent Communication (NVC) principles. "
         "Peacy listens, remembers past interactions, and evolves over time by learning from conversations. "
-        "Its mission is to ensure every chat is supportive, empathetic, and conflict‐free."
+        "Its mission is to ensure every chat is supportive, empathetic, and conflict‐free. "
+        "Built by Canberk."
     )
     try:
         count = collection.count()
@@ -96,5 +96,3 @@ def seed_memory():
             else:
                 print("Seed memory already exists.")
 
-if __name__ == "__main__":
-    seed_memory()
