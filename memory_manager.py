@@ -1,98 +1,110 @@
 import os
 import uuid
 import logging
-import chromadb
-from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
-from config import CHROMA_PERSIST_DIRECTORY
+import asyncio
+import nest_asyncio
 
+import pytz
+import psycopg2
+import spacy
+
+from rich.console import Console
+from rich.theme import Theme
+from rich.logging import RichHandler
+
+from config import PG_CONNECTION_STRING, CHROMA_PERSIST_DIRECTORY
+
+# LangChain & Chroma Imports
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain.docstore.document import Document
+
+# Import DB helper functions from db_manager (instead of duplicating them here)
+from db_manager import init_db, log_message, update_user_profile, get_user_profile, get_conversation_summary, update_conversation_summary_in_db
+# Import start_scheduler from background_tasks for standalone execution
+from background_tasks import start_scheduler
+
+# ------------------------
+# Global Objects and Setup
+# ------------------------
+# Define a custom theme for colorful logs.
+custom_theme = Theme({
+    "info": "dim cyan",
+    "warning": "magenta",
+    "error": "bold red",
+    "debug": "blue",
+    "critical": "bold red"
+})
+
+console = Console(theme=custom_theme)
+handler = RichHandler(rich_tracebacks=True, markup=True, show_time=True, show_level=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="[%X]",
+    handlers=[handler]
+)
 logger = logging.getLogger(__name__)
 
-# Load the embedding model.
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+# Load spaCy model.
+nlp = spacy.load("en_core_web_sm")
+
+# Initialize the embedding model.
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 # Ensure the persistence directory exists.
 os.makedirs(CHROMA_PERSIST_DIRECTORY, exist_ok=True)
 
-# Initialize the Chroma client with persistence.
-client = chromadb.Client(
-    Settings(chroma_db_impl="duckdb+parquet", persist_directory=CHROMA_PERSIST_DIRECTORY)
+# Initialize the Chroma vector store.
+vectorstore = Chroma(
+    collection_name="peacy_memories",
+    embedding_function=embeddings,
+    persist_directory=CHROMA_PERSIST_DIRECTORY,
 )
 
-def get_or_create_collection(name: str):
-    collections = client.list_collections()
-    logger.info(f"Existing collections: {[col.name for col in collections]}")
-    for col in collections:
-        if col.name == name:
-            logger.info(f"Loading existing collection: {name}")
-            return client.get_collection(name=name)
-    logger.info(f"Creating new collection: {name}")
-    return client.create_collection(name=name)
-
-collection = get_or_create_collection("peacy_memories")
-
-def get_embedding(text: str) -> list:
-    return embedding_model.encode(text, convert_to_tensor=False, show_progress_bar=False)
-
+# ------------------------
+# Memory Management Functions
+# ------------------------
 def add_memory(text: str, metadata: dict = None):
-    embedding = get_embedding(text)
-    doc_id = metadata.get("id", str(uuid.uuid4()))
-    collection.add(
-        documents=[text],
-        metadatas=[metadata or {}],
-        embeddings=[embedding],
-        ids=[doc_id]
-    )
+    """Add a memory by storing a Document in the vector store."""
+    doc = Document(page_content=text, metadata=metadata or {})
+    vectorstore.add_documents([doc])
+    logger.info("[bold blue]Memory added.[/bold blue]")
 
 def retrieve_memory(query: str, n_results: int = 3) -> str:
-    query_embedding = get_embedding(query)
-    try:
-        count = collection.count()
-    except Exception:
-        count = 0
-    if count == 0:
+    """Retrieve memories by performing a similarity search."""
+    results = vectorstore.similarity_search(query, k=n_results)
+    if not results:
         return ""
-    k = min(n_results, count)
-    try:
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=k
+    return "\n".join([doc.page_content for doc in results])
+
+def seed_memory_dynamic():
+    """Seed the memory with a base prompt if none exists."""
+    current_seed = retrieve_memory("system prompt", n_results=1)
+    if not current_seed:
+        dynamic_seed = (
+            "Peacy is a friendly AI that learns continuously from every conversation, "
+            "building personal connections and evolving with each interaction. "
+            "Every message helps me understand you better, and I'm always growing from our shared experiences."
         )
-        if not results["documents"] or not results["documents"][0]:
-            return ""
-        return "\n".join(results["documents"][0])
-    except Exception as e:
-        logger.exception("Error during memory retrieval:")
-        return ""
-
-def seed_memory():
-    seed_prompt = (
-        "Peacy is a compassionate AI mediator built for group chats. "
-        "It fosters peaceful communication and helps build genuine relationships through Nonviolent Communication (NVC) principles. "
-        "Peacy listens, remembers past interactions, and evolves over time by learning from conversations. "
-        "Its mission is to ensure every chat is supportive, empathetic, and conflict‐free. "
-        "Built by Canberk."
-    )
-    try:
-        count = collection.count()
-    except Exception:
-        count = 0
-    if count == 0:
-        add_memory(seed_prompt, metadata={"type": "seed"})
-        print("Seed memory added (collection was empty).")
+        add_memory(dynamic_seed, metadata={"type": "seed"})
+        print("[bold yellow]Dynamic seed memory added (collection was empty).[/bold yellow]")
     else:
-        try:
-            existing = collection.query(
-                query_embeddings=[get_embedding("compassionate AI mediator")],
-                n_results=1
-            )
-        except Exception:
-            add_memory(seed_prompt, metadata={"type": "seed"})
-            print("Seed memory added (query failed: no index present).")
-        else:
-            if not existing["documents"][0]:
-                add_memory(seed_prompt, metadata={"type": "seed"})
-                print("Seed memory added (seed not found in collection).")
-            else:
-                print("Seed memory already exists.")
+        print("[bold green]Seed memory already exists.[/bold green]")
 
+# ------------------------
+# Main Routine (for standalone execution)
+# ------------------------
+if __name__ == '__main__':
+    nest_asyncio.apply()
+
+    async def main():
+        await asyncio.to_thread(init_db)
+        # Local import of start_scheduler to avoid circular dependency
+        start_scheduler()
+        # ... rest of your standalone logic
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot shutdown gracefully via KeyboardInterrupt.")

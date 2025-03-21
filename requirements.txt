@@ -6,3 +6,5 @@ sentence_transformers
 APScheduler
 rich
 python-dotenv
+langchain
+nest_asyncio

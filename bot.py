@@ -7,24 +7,46 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import logging
 import openai
 import asyncio
-import concurrent.futures
 import pytz
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
-
     MessageHandler,
+    ChatMemberHandler,
     ContextTypes,
     filters,
     JobQueue
 )
 import spacy
-from config import TELEGRAM_TOKEN, GROQ_API_KEY, PG_CONNECTION_STRING
-from memory_manager import add_memory, retrieve_memory, seed_memory
-from db_manager import init_db, log_message, update_user_profile, get_user_profile, get_conversation_summary, update_conversation_summary_in_db
+from config import TELEGRAM_TOKEN, GROQ_API_KEY
+from memory_manager import add_memory, retrieve_memory, seed_memory_dynamic  # memory management functions
+from db_manager import (
+    init_db,
+    log_message,
+    update_user_profile,
+    get_user_profile,
+    get_conversation_summary,
+    update_conversation_summary_in_db
+)
 from background_tasks import start_scheduler
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.logging import RichHandler
+
+# --- LangChain imports ---
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.memory import ConversationSummaryMemory
+
+# Set up Rich logging for colorful logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler()]
+)
+logger = logging.getLogger(__name__)
+console = Console()
 
 # Import spaCy for NLP-based entity recognition.
 nlp = spacy.load("en_core_web_sm")
@@ -33,73 +55,81 @@ nlp = spacy.load("en_core_web_sm")
 openai.api_key = GROQ_API_KEY
 openai.api_base = "https://api.groq.com/openai/v1"
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-console = Console()
-
-# Define wake words so that Peacy only responds when activated.
-WAKE_WORDS = ["peacy", "pc", "peacybot", "peacyai", "peacy-ai", "peacy-bot", "peacey", "peaceybot", "peaceyai", "peacey-ai", "peacey-bot"]
+# Define wake words.
+WAKE_WORDS = [
+    "peacy", "pc", "peacybot", "peacyai", "peacy-ai",
+    "peacy-bot", "peacey", "peaceybot", "peaceyai",
+    "peacey-ai", "peacey-bot"
+]
 
 def contains_wake_word(text: str) -> bool:
-    lower_text = text.lower()
-    return any(w in lower_text for w in WAKE_WORDS)
+    return any(w in text.lower() for w in WAKE_WORDS)
 
-# Synchronous function to generate a reply using OpenAI.
-def sync_generate_response(user_input: str, memory_context: str = "") -> str:
-    # Modified system prompt to instruct the model to avoid repetitive greetings.
-    system_prompt = (
-        "You are Peacy, a kind and peaceful AI mediator."
-        "You follow Nonviolent Communication (NVC) principles and keep a subtle memory of past conversations. "
-        "When generating a reply, do not start with a greeting such as 'Hello' or 'Hi' if the conversation is ongoing. "
-        "Focus on directly addressing the user's message and maintaining a smooth, natural conversation flow."
-        "Build personal connections and offer empathetic responses. "
-        "Remember to be supportive, understanding, and conflict-free."
-        )
-    # Build the prompt using any provided memory context plus the current user input.
-    prompt = f"{memory_context}\nUser: {user_input}\nPeacy:"
+# --- Define the chat member update handler ---
+async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        response = openai.ChatCompletion.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.7,
-        )
-        reply = response.choices[0].message.content.strip()
-        logger.debug(f"Groq API response: {reply}")
+        # Retrieve detailed member info using getChatMember.
+        chat_id = update.effective_chat.id
+        new_member = update.chat_member.new_chat_member.user
+        user_id = new_member.id
+        username = new_member.username or ""
+        full_name = new_member.full_name or ""
+        profile_info = f"{full_name} (username: {username})" if username else full_name
+        update_user_profile(user_id, username, profile_info)
+        logger.info(f"Updated user info for {user_id}: {profile_info}")
     except Exception as e:
-        logger.exception("Error during generate_response:")
-        reply = "Sorry, I couldn't generate a response at the moment."
-    return reply
+        logger.exception(f"Error updating user info: {e}")
 
+# --- Set up LangChain dynamic prompt and memory ---
+prompt_template = PromptTemplate(
+    input_variables=["conversation_summary", "user_input"],
+    template=(
+        "You are Peacy, a friendly and concise AI that learns continuously from every conversation, "
+        "building personal connections and evolving with each interaction.\n"
+        "Keep your response direct and to the point.\n"
+        "Context: {conversation_summary}\n"
+        "User: {user_input}\n"
+        "Peacy:"
+    )
+)
 
-# Asynchronous wrapper.
-async def generate_response(user_input: str, memory_context: str = "") -> str:
-    loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        reply = await loop.run_in_executor(pool, sync_generate_response, user_input, memory_context)
-    return reply
+llm = ChatOpenAI(
+    openai_api_base="https://api.groq.com/openai/v1",
+    openai_api_key=GROQ_API_KEY,
+    model_name="llama-3.3-70b-versatile",
+    temperature=0.5,
+)
+response_chain = prompt_template | llm
 
-# A helper function to silently extract a person's name from a message using spaCy.
-def extract_person_name(text: str) -> str:
-    doc = nlp(text)
-    # Return the first PERSON entity found.
-    for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            return ent.text
-    return ""
+# Initialize dynamic conversation memory.
+conversation_memory = ConversationSummaryMemory(
+    llm=llm,
+    max_token_limit=1024,
+    memory_key="chat_history",
+    return_messages=True,
+    ai_prefix="Peacy",
+)
 
-# General message handler.
+async def generate_response(user_input: str, conversation_summary: str = "") -> str:
+    inputs = {"conversation_summary": conversation_summary, "user_input": user_input}
+    try:
+        result = await asyncio.to_thread(response_chain.invoke, inputs)
+        if hasattr(result, "content"):
+            return result.content.strip()
+        return str(result).strip()
+    except Exception as e:
+        if "401" in str(e) or "invalid_api_key" in str(e):
+            logger.error(f"Authentication error: {e}")
+            return "Sorry, I'm having trouble authenticating. Please check my configuration."
+        else:
+            logger.exception("Error generating response:")
+            return "Sorry, I encountered an error generating a response."
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
     user_message = update.message.text.strip()
-    # Only process if a wake word is present.
     if not contains_wake_word(user_message):
         return
 
@@ -107,45 +137,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"Received message from {user_id} in chat {chat_id}: {user_message}")
 
-    # Dynamically attempt to extract a name from the message if the user's profile is not set.
-    profile = get_user_profile(user_id)
-    if (not profile) or (not profile[0]):
-        name = extract_person_name(user_message)
-        if name:
-            update_user_profile(user_id, name)
-            # Optionally, send a very brief confirmation.
-            await update.message.reply_text("Thanks, I'll keep that in mind.")
+    # Immediately update user profile from Telegram data.
+    telegram_user = update.effective_user
+    username = telegram_user.username or ""
+    full_name = telegram_user.full_name or ""
+    profile_info = f"{full_name} (username: {username})" if username else full_name
+    update_user_profile(user_id, username, profile_info)
 
-    # Log the user's message.
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, log_message, chat_id, user_id, user_message)
 
-    # Retrieve and update conversation summary.
+    # Update dynamic conversation memory.
+    await asyncio.to_thread(conversation_memory.save_context, {"input": user_message}, {"output": ""})
+    dynamic_summary = conversation_memory.load_memory_variables({})["chat_history"]
+
+    # Retrieve relevant past interactions from Chroma.
+    retrieved = retrieve_memory(user_message, n_results=3)
+    retrieved_text = f"Relevant past interactions: {retrieved}\n" if retrieved else ""
+
+    # Get stored conversation summary from the database.
     conv_summary = get_conversation_summary(chat_id)
     updated_summary = (conv_summary + " " + user_message) if conv_summary else user_message
     update_conversation_summary_in_db(chat_id, updated_summary)
 
-    # Include the conversation summary in the memory context.
-    memory_context = f"Conversation summary: {updated_summary}\n"
-    # Also include user profile info silently.
+    # Build the final conversation summary context.
+    conversation_summary = f"{retrieved_text}{dynamic_summary}"
     profile = get_user_profile(user_id)
     if profile and profile[0]:
-        memory_context = f"User info: {profile[0]}.\n" + memory_context
+        conversation_summary = f"User info: {profile[0]}.\n" + conversation_summary
 
-    logger.info(f"Memory context for response: {memory_context}")
+    logger.info(f"Conversation summary for response: {conversation_summary}")
 
-    # Generate a reply.
-    reply = await generate_response(user_message, memory_context)
+    reply = await generate_response(user_message, conversation_summary)
     logger.info(f"Generated reply: {reply}")
 
-    # Send the reply.
     await update.message.reply_text(reply)
-    # Log the reply and add both the incoming message and reply to persistent memory.
     await loop.run_in_executor(None, log_message, chat_id, "Peacy", reply)
     await loop.run_in_executor(None, add_memory, user_message, {"role": "user"})
     await loop.run_in_executor(None, add_memory, reply, {"role": "peacy"})
 
-# Main initialization.
 async def main():
     loop = asyncio.get_event_loop()
     with Progress(
@@ -159,7 +189,7 @@ async def main():
         progress.update(db_task, description="[green]Database initialized.[/green]")
 
         seed_task = progress.add_task("[cyan]Seeding memory...", total=None)
-        await loop.run_in_executor(None, seed_memory)
+        await loop.run_in_executor(None, seed_memory_dynamic)
         progress.update(seed_task, description="[green]Memory seeded.[/green]")
 
         sched_task = progress.add_task("[cyan]Starting background tasks...", total=None)
@@ -170,18 +200,24 @@ async def main():
     job_queue.scheduler._timezone = pytz.utc
 
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).job_queue(job_queue).build()
+    # Add regular message handler.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Add chat member update handler.
+    application.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
     logger.info("Peacy is running...")
     await application.run_polling()
 
 if __name__ == '__main__':
+    import sys
     try:
         asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot shutdown gracefully via KeyboardInterrupt.")
+        sys.exit(0)
     except RuntimeError as e:
-        if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.create_task(main())
-            loop.run_forever()
+        if "Cannot close a running event loop" in str(e):
+            logger.info("Bot shutdown gracefully.")
+            sys.exit(0)
         else:
             raise

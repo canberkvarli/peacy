@@ -85,6 +85,15 @@ Peacy will:
 - Update user profiles silently when users introduce themselves.
 - Generate smooth, context-aware responses based on conversation history.
 
+## Storage Reset
+
+```bash
+python -m utils.reset_storage
+```
+
+- Reset Chroma: The script checks if the directory specified by CHROMA_PERSIST_DIRECTORY exists. If it does, it deletes that directory (using shutil.rmtree), logging the action.
+- Reset PostgreSQL: The script connects to your PostgreSQL database using PG_CONNECTION_STRING, drops the tables if they exist, and logs the outcome.
+
 ## Project Structure
 
 ```
@@ -119,4 +128,3 @@ Peacy uses asynchronous programming with `asyncio` and `nest_asyncio` for smooth
 ## License
 
 This project is licensed under the MIT License.
-
