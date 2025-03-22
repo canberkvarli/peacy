@@ -1,7 +1,7 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
 import psycopg2
-from config import PG_CONNECTION_STRING
+from config import config
 from rich.console import Console
 
 # Import text analysis functions from memory_manager.
@@ -13,7 +13,7 @@ console = Console()
 
 def summarize_conversations():
     console.log("[bold blue]Starting summarization of conversations...[/bold blue]")
-    conn = psycopg2.connect(PG_CONNECTION_STRING)
+    conn = psycopg2.connect(config.PG_CONNECTION_STRING)
     cur = conn.cursor()
     # Retrieve messages from the past hour, grouped by chat.
     cur.execute("""
@@ -36,7 +36,7 @@ def analyze_and_learn():
     Extract key personal details from recent messages and update user profiles.
     """
     console.log("[bold blue]Starting detailed analysis of conversations...[/bold blue]")
-    conn = psycopg2.connect(PG_CONNECTION_STRING)
+    conn = psycopg2.connect(config.PG_CONNECTION_STRING)
     cur = conn.cursor()
     cur.execute("""
         SELECT user_id, message_text

@@ -9,4 +9,6 @@ venv/
 /chroma_logs.log
 
 # Sensitive configuration (API keys)
-config.py
+/config.py
+
+.env

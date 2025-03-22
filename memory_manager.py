@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.theme import Theme
 from rich.logging import RichHandler
 
-from config import PG_CONNECTION_STRING, CHROMA_PERSIST_DIRECTORY
+from config import config
 
 # LangChain & Chroma Imports
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -53,23 +53,23 @@ nlp = spacy.load("en_core_web_sm")
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 # Ensure the persistence directory exists.
-os.makedirs(CHROMA_PERSIST_DIRECTORY, exist_ok=True)
+os.makedirs(config.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
 
 # Initialize the Chroma vector store.
 vectorstore = Chroma(
     collection_name="peacy_memories",
     embedding_function=embeddings,
-    persist_directory=CHROMA_PERSIST_DIRECTORY,
+    persist_directory=config.CHROMA_PERSIST_DIRECTORY,
 )
 
 # ------------------------
 # Memory Management Functions
 # ------------------------
 def add_memory(text: str, metadata: dict = None):
-    """Add a memory by storing a Document in the vector store."""
+    """Add a memory by storing a Document in the vector store and persisting the change."""
     doc = Document(page_content=text, metadata=metadata or {})
     vectorstore.add_documents([doc])
-    logger.info("[bold blue]Memory added.[/bold blue]")
+    logger.info("[bold blue]Memory added and persisted.[/bold blue]")
 
 def retrieve_memory(query: str, n_results: int = 3) -> str:
     """Retrieve memories by performing a similarity search."""

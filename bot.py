@@ -1,4 +1,6 @@
 import nest_asyncio
+
+from text_analysis import analyze_sentiment, extract_location, extract_person_name
 nest_asyncio.apply()
 
 import os
@@ -18,7 +20,9 @@ from telegram.ext import (
     JobQueue
 )
 import spacy
-from config import TELEGRAM_TOKEN, GROQ_API_KEY
+
+from config import config
+
 from memory_manager import add_memory, retrieve_memory, seed_memory_dynamic  # memory management functions
 from db_manager import (
     init_db,
@@ -51,8 +55,7 @@ console = Console()
 # Import spaCy for NLP-based entity recognition.
 nlp = spacy.load("en_core_web_sm")
 
-# Configure OpenAI (Groq) API.
-openai.api_key = GROQ_API_KEY
+openai.api_key = config.GROQ_API_KEY
 openai.api_base = "https://api.groq.com/openai/v1"
 
 # Define wake words.
@@ -68,7 +71,6 @@ def contains_wake_word(text: str) -> bool:
 # --- Define the chat member update handler ---
 async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # Retrieve detailed member info using getChatMember.
         chat_id = update.effective_chat.id
         new_member = update.chat_member.new_chat_member.user
         user_id = new_member.id
@@ -95,9 +97,9 @@ prompt_template = PromptTemplate(
 
 llm = ChatOpenAI(
     openai_api_base="https://api.groq.com/openai/v1",
-    openai_api_key=GROQ_API_KEY,
+    openai_api_key=config.GROQ_API_KEY,
     model_name="llama-3.3-70b-versatile",
-    temperature=0.5,
+    temperature=0.7,
 )
 response_chain = prompt_template | llm
 
@@ -137,12 +139,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"Received message from {user_id} in chat {chat_id}: {user_message}")
 
-    # Immediately update user profile from Telegram data.
+    # Update user profile from Telegram data.
     telegram_user = update.effective_user
     username = telegram_user.username or ""
     full_name = telegram_user.full_name or ""
     profile_info = f"{full_name} (username: {username})" if username else full_name
     update_user_profile(user_id, username, profile_info)
+
+    # Dynamic Extraction of Personal Information.
+    extracted_name = extract_person_name(user_message)
+    extracted_location = extract_location(user_message)
+    sentiment = analyze_sentiment(user_message)
+
+    # Retrieve current profile and update if new info is found.
+    current_profile = get_user_profile(user_id)
+    stored_name = current_profile[0] if current_profile and current_profile[0] else ""
+    if extracted_name and (not stored_name or extracted_name.lower() != stored_name.lower()):
+        new_profile_info = f"Location: {extracted_location}, Sentiment: {sentiment}"
+        update_user_profile(user_id, extracted_name, new_profile_info)
+        logger.info(f"Updated profile for {user_id} with new name: {extracted_name}")
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, log_message, chat_id, user_id, user_message)
@@ -151,24 +166,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(conversation_memory.save_context, {"input": user_message}, {"output": ""})
     dynamic_summary = conversation_memory.load_memory_variables({})["chat_history"]
 
+    # If dynamic_summary is a list, join its elements into a string.
+    if isinstance(dynamic_summary, list):
+        dynamic_summary = "\n".join(str(item) for item in dynamic_summary)
+
     # Retrieve relevant past interactions from Chroma.
     retrieved = retrieve_memory(user_message, n_results=3)
     retrieved_text = f"Relevant past interactions: {retrieved}\n" if retrieved else ""
 
-    # Get stored conversation summary from the database.
-    conv_summary = get_conversation_summary(chat_id)
-    updated_summary = (conv_summary + " " + user_message) if conv_summary else user_message
-    update_conversation_summary_in_db(chat_id, updated_summary)
+    # Load the persistent conversation summary from the DB.
+    persistent_summary = get_conversation_summary(chat_id)  # This summary is stored permanently.
 
-    # Build the final conversation summary context.
-    conversation_summary = f"{retrieved_text}{dynamic_summary}"
+    # Combine all pieces into a final conversation summary.
+    combined_summary = ""
+    if persistent_summary:
+        combined_summary += f"Persistent conversation summary: {persistent_summary}\n"
+    combined_summary += retrieved_text
+    combined_summary += dynamic_summary
+
+    # Include user profile info if available.
     profile = get_user_profile(user_id)
     if profile and profile[0]:
-        conversation_summary = f"User info: {profile[0]}.\n" + conversation_summary
+        combined_summary = f"User info: {profile[0]}.\n" + combined_summary
 
-    logger.info(f"Conversation summary for response: {conversation_summary}")
+    logger.info(f"Conversation summary for response: {combined_summary}")
 
-    reply = await generate_response(user_message, conversation_summary)
+    # Generate a reply using the combined summary.
+    reply = await generate_response(user_message, combined_summary)
+
     logger.info(f"Generated reply: {reply}")
 
     await update.message.reply_text(reply)
@@ -199,10 +224,9 @@ async def main():
     job_queue = JobQueue()
     job_queue.scheduler._timezone = pytz.utc
 
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).job_queue(job_queue).build()
-    # Add regular message handler.
+    # Use config.TELEGRAM_TOKEN for the token.
+    application = ApplicationBuilder().token(config.TELEGRAM_TOKEN).job_queue(job_queue).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # Add chat member update handler.
     application.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
     logger.info("Peacy is running...")
