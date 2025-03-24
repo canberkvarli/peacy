@@ -146,7 +146,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     profile_info = f"{full_name} (username: {username})" if username else full_name
     update_user_profile(user_id, username, profile_info)
 
-    # Dynamic Extraction of Personal Information.
+    # Dynamic extraction of personal information.
     extracted_name = extract_person_name(user_message)
     extracted_location = extract_location(user_message)
     sentiment = analyze_sentiment(user_message)
@@ -166,16 +166,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(conversation_memory.save_context, {"input": user_message}, {"output": ""})
     dynamic_summary = conversation_memory.load_memory_variables({})["chat_history"]
 
-    # If dynamic_summary is a list, join its elements into a string.
+    # Ensure dynamic_summary is a string.
     if isinstance(dynamic_summary, list):
         dynamic_summary = "\n".join(str(item) for item in dynamic_summary)
 
-    # Retrieve relevant past interactions from Chroma.
+    # Retrieve relevant past interactions from the vector store.
     retrieved = retrieve_memory(user_message, n_results=3)
     retrieved_text = f"Relevant past interactions: {retrieved}\n" if retrieved else ""
 
     # Load the persistent conversation summary from the DB.
-    persistent_summary = get_conversation_summary(chat_id)  # This summary is stored permanently.
+    persistent_summary = get_conversation_summary(chat_id)  # Stored permanently.
 
     # Combine all pieces into a final conversation summary.
     combined_summary = ""
@@ -184,22 +184,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     combined_summary += retrieved_text
     combined_summary += dynamic_summary
 
-    # Include user profile info if available.
+    # Optionally include user info only once if it's not already in the summary.
     profile = get_user_profile(user_id)
-    if profile and profile[0]:
-        combined_summary = f"User info: {profile[0]}.\n" + combined_summary
+    if profile and profile[0] and "User:" not in combined_summary:
+        combined_summary = f"User: {profile[0]}.\n" + combined_summary
+
+    # (Optional) Truncate the combined_summary if it becomes too long.
+    MAX_CONTEXT_LENGTH = 1024  # adjust as needed
+    if len(combined_summary) > MAX_CONTEXT_LENGTH:
+        combined_summary = combined_summary[-MAX_CONTEXT_LENGTH:]
 
     logger.info(f"Conversation summary for response: {combined_summary}")
 
-    # Generate a reply using the combined summary.
+    # Generate a reply using the cleaned-up summary.
     reply = await generate_response(user_message, combined_summary)
-
     logger.info(f"Generated reply: {reply}")
 
+    # Send the reply.
     await update.message.reply_text(reply)
     await loop.run_in_executor(None, log_message, chat_id, "Peacy", reply)
     await loop.run_in_executor(None, add_memory, user_message, {"role": "user"})
     await loop.run_in_executor(None, add_memory, reply, {"role": "peacy"})
+
+    # Persist the updated conversation summary to the DB.
+    update_conversation_summary_in_db(chat_id, combined_summary)
+
 
 async def main():
     loop = asyncio.get_event_loop()
