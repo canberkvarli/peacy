@@ -6,7 +6,7 @@ import nest_asyncio
 
 import pytz
 import psycopg2
-import spacy
+import en_core_web_sm
 
 from rich.console import Console
 from rich.theme import Theme
@@ -47,7 +47,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load spaCy model.
-nlp = spacy.load("en_core_web_sm")
+nlp = en_core_web_sm.load()
 
 # Initialize the embedding model.
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")

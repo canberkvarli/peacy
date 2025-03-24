@@ -19,7 +19,7 @@ from telegram.ext import (
     filters,
     JobQueue
 )
-import spacy
+import en_core_web_sm
 
 from config import config
 
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 # Import spaCy for NLP-based entity recognition.
-nlp = spacy.load("en_core_web_sm")
+nlp = en_core_web_sm.load()
 
 openai.api_key = config.GROQ_API_KEY
 openai.api_base = "https://api.groq.com/openai/v1"

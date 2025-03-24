@@ -1,7 +1,7 @@
 # text_analysis.py
-import spacy
+import en_core_web_sm
 
-nlp = spacy.load("en_core_web_sm")
+nlp = en_core_web_sm.load()
 
 # ------------------------
 # Text Analysis Functions
