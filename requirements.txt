@@ -9,3 +9,4 @@ python-dotenv
 langchain
 nest_asyncio
 spacy
+en_core_web_sm
