@@ -4,8 +4,6 @@ import logging
 import asyncio
 import nest_asyncio
 
-import pytz
-import psycopg2
 import en_core_web_sm
 
 from rich.console import Console
