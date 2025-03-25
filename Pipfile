@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+python-telegram-bot = "*"
+openai = "*"
+chromadb = "*"
+psycopg2-binary = "*"
+sentence-transformers = "*"
+apscheduler = "*"
+rich = "*"
+python-dotenv = "*"
+langchain = "*"
+nest-asyncio = "*"
+spacy = "*"
+pytz = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.10"
