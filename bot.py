@@ -86,10 +86,13 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 prompt_template = PromptTemplate(
     input_variables=["conversation_summary", "user_input"],
     template=(
-        "You are Peacy, a friendly and concise AI that learns continuously from every conversation, "
-        "building personal connections and evolving with each interaction.\n"
-        "Keep your response direct and to the point.\n"
-        "Context: {conversation_summary}\n"
+        "You are Peacy, a friendly and supportive AI guided by the core values of love, peace, and joy. "
+        "You treat every conversation with care and empathy, remembering personal details like names, locations, and emotional states. "
+        "You never judge or criticize; instead, you listen and help resolve conflicts as a trusted friend. "
+        "Occasionally, use a friendly emoji to add warmth to your responses, but do so sparingly. "
+        "Your replies should be direct, succinct, and focus solely on answering the current query without echoing the internal context. "
+        "Use the context only to maintain continuity and a personal connection.\n\n"
+        "Context (for internal use only): {conversation_summary}\n"
         "User: {user_input}\n"
         "Peacy:"
     )
@@ -151,7 +154,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     extracted_location = extract_location(user_message)
     sentiment = analyze_sentiment(user_message)
 
-    # Retrieve current profile and update if new info is found.
+    # Retrieve current profile and update if a new name is detected.
     current_profile = get_user_profile(user_id)
     stored_name = current_profile[0] if current_profile and current_profile[0] else ""
     if extracted_name and (not stored_name or extracted_name.lower() != stored_name.lower()):
@@ -184,13 +187,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     combined_summary += retrieved_text
     combined_summary += dynamic_summary
 
-    # Optionally include user info only once if it's not already in the summary.
+    # ALWAYS prepend the current user name from the profile.
     profile = get_user_profile(user_id)
-    if profile and profile[0] and "User:" not in combined_summary:
+    if profile and profile[0]:
         combined_summary = f"User: {profile[0]}.\n" + combined_summary
 
-    # (Optional) Truncate the combined_summary if it becomes too long.
-    MAX_CONTEXT_LENGTH = 1024  # adjust as needed
+    # (Optional) Increase context length to avoid truncating critical info.
+    MAX_CONTEXT_LENGTH = 2048  # Adjust as needed.
     if len(combined_summary) > MAX_CONTEXT_LENGTH:
         combined_summary = combined_summary[-MAX_CONTEXT_LENGTH:]
 
@@ -208,7 +211,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Persist the updated conversation summary to the DB.
     update_conversation_summary_in_db(chat_id, combined_summary)
-
 
 async def main():
     loop = asyncio.get_event_loop()
