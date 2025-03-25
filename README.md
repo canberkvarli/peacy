@@ -4,127 +4,155 @@ Peacy is an AI-powered mediator designed for group chats. Built using Python, Pe
 
 ## Features
 
-- **Persistent Memory**:  
-  Peacy stores conversation data in a vector index using ChromaDB, ensuring previous interactions are remembered across restarts.
+### Persistent Memory & Vector Search
+- Uses a Chroma vector store (via LangChain and ChromaDB) to store and retrieve conversation memories for context-aware responses.
 
-- **Structured User Profiles**:  
-  Critical user data (such as profiles) is stored in PostgreSQL, allowing Peacy to personalize responses without echoing sensitive information.
+### Structured User Profiles
+- Stores user data and conversation summaries in PostgreSQL, enabling personalized interactions and continuity across sessions.
 
-- **Dynamic Context-Aware Responses**:  
-  By incorporating conversation history into its prompts, Peacy generates smooth, context-aware replies.
+### Dynamic, Context-Aware Responses
+- Integrates conversation history into prompt templates using LangChain (with the ChatOpenAI interface) to generate smooth, context-sensitive replies.
 
-- **Wake Word Activation**:  
-  The bot responds only when a wake word (e.g., "Peacy", "PC", "Peacccy") is detected in a message, preventing unnecessary interruptions.
+### Wake Word Activation
+- Listens for a predefined set of wake words (e.g., "Peacy", "PC", etc.) to trigger a response, preventing unnecessary interruptions.
 
-- **Background Tasks**:  
-  Peacy periodically summarizes group chat conversations through background tasks.
+### Background Tasks & Scheduled Analysis
+- Periodically summarizes conversations and performs detailed analysis (sentiment, entity extraction) using background tasks scheduled via APScheduler.
+
+### Reset & Maintenance Tools
+- Includes scripts to reset the Chroma vector store and PostgreSQL tables for easy maintenance and testing.
 
 ## Requirements
 
-Please refer to the [`requirements.txt`](requirements.txt) file for a complete list of dependencies:
+Peacy uses Pipenv for dependency management. The following packages are required (see the [Pipfile](Pipfile) for full details):
 
-```
-python-telegram-bot
-openai
-chromadb
-psycopg2-binary
-sentence_transformers
-APScheduler
-rich
-python-dotenv
-nest_asyncio
-```
+- python-telegram-bot
+- openai
+- chromadb
+- psycopg2-binary
+- sentence-transformers
+- apscheduler
+- rich
+- python-dotenv
+- langchain
+- nest-asyncio
+- spacy
+- pytz
+- langchain_openai
+- langchain-huggingface
+- langchain-chroma
 
 ## Installation
 
-1. **Clone the Repository:**
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/yourusername/peacy.git
 cd peacy
 ```
 
-2. **Set Up a Virtual Environment:**
+### 2. Install Pipenv
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
+pip install pipenv
 ```
 
-3. **Install Dependencies:**
+### 3. Install Dependencies with Pipenv
 
 ```bash
-pip install -r requirements.txt
+pipenv install
+```
+
+This command creates a virtual environment and installs all required packages from the Pipfile and Pipfile.lock.
+
+### 4. Activate the Virtual Environment
+
+```bash
+pipenv shell
 ```
 
 ## Configuration
 
-Create a `.env` file (or update `config.py`) with the following environment variables:
+Create a `.env` file in the project root and set the following environment variables:
 
-```
+```env
 TELEGRAM_TOKEN=your_telegram_bot_token_here
 GROQ_API_KEY=your_groq_api_key_here
+OPEN_AI_API_KEY=your_open_ai_api_key_here
 PG_CONNECTION_STRING=dbname=peacy_db user=peacy_admin password=admin host=localhost port=5432
 CHROMA_PERSIST_DIRECTORY=./chroma_db
+PINECONE_API_KEY=your_pinecone_api_key_here # if using Pinecone
+ENV=development
 ```
+
+Ensure these variables are correctly configured for your deployment.
 
 ## Usage
 
-To run the bot, execute:
+To run the bot locally (with the virtual environment activated):
 
 ```bash
-python bot.py
+python src/bot.py
 ```
 
-Peacy will:
+## Runtime Behavior
 
-- Initialize the PostgreSQL database (creating tables for messages and user profiles if they don’t exist).
-- Seed initial memory if the vector index is empty.
-- Start background tasks (e.g., conversation summarization).
-- Listen for messages containing specified wake words.
-- Update user profiles silently when users introduce themselves.
-- Generate smooth, context-aware responses based on conversation history.
+### Database Initialization
+- Initializes PostgreSQL database on startup (creates tables for messages, users, and summaries).
+
+### Memory Seeding
+- Seeds the Chroma vector store if empty to kickstart context building.
+
+### Background Tasks
+- Scheduled tasks for summarization and analysis using APScheduler.
+
+### Wake Word Activation
+- Responds only when messages contain designated wake words.
 
 ## Storage Reset
 
+To reset Chroma and PostgreSQL storage, run:
+
 ```bash
-python -m utils.reset_storage
+python reset_storage.py
 ```
 
-- Reset Chroma: The script checks if the directory specified by CHROMA_PERSIST_DIRECTORY exists. If it does, it deletes that directory (using shutil.rmtree), logging the action.
-- Reset PostgreSQL: The script connects to your PostgreSQL database using PG_CONNECTION_STRING, drops the tables if they exist, and logs the outcome.
+This script:
+- Removes Chroma persistence directory (if exists).
+- Drops PostgreSQL tables for messages, users, and conversation summaries.
 
 ## Project Structure
 
-```
+```bash
 peacy/
-├── bot.py                 # Main bot file (Telegram integration and core logic)
-├── config.py              # Configuration file for environment variables
-├── db_manager.py          # Database management: initializing and logging to PostgreSQL
-├── memory_manager.py      # Persistent memory handling with ChromaDB and SentenceTransformer
-├── background_tasks.py    # Background tasks (conversation summarization using APScheduler)
-├── requirements.txt       # Python package dependencies
-└── README.md              # This file
+├── src/
+│   ├── __init__.py
+│   ├── bot.py                # Main bot file
+│   ├── config.py             # Loads environment variables
+│   ├── db_manager.py         # PostgreSQL DB initialization & logging
+│   ├── memory_manager.py     # Persistent memory handling (ChromaDB)
+│   ├── background_tasks.py   # Scheduled summarization & analysis tasks
+│   └── text_analysis.py      # Sentiment analysis & entity extraction
+│   └── reset_storage.py      # Storage reset utilities
+├── Pipfile                   # Pipenv dependencies
+├── Pipfile.lock              # Dependency versions
+├── .env                      # Environment variable definitions
+├── .gitignore
+├── README.md                 # Project documentation
 ```
 
 ## Customization
 
 ### Response Generation
-
-Modify the `sync_generate_response` function in `bot.py` to adjust the system prompt or model parameters for different response styles.
+- Modify the prompt template and parameters in `src/bot.py`.
 
 ### Memory & Profile Integration
-
-The bot silently updates and retrieves user profile data from PostgreSQL, integrating it into the memory context for responses. Adjust this logic in the `handle_message` function as needed.
+- Adjust logic in `src/db_manager.py` and `src/memory_manager.py`.
 
 ### Wake Words
-
-Update the `WAKE_WORDS` list in `bot.py` to change the keywords that trigger Peacy.
+- Customize the wake words in `src/bot.py`.
 
 ## Graceful Shutdown
 
-Peacy uses asynchronous programming with `asyncio` and `nest_asyncio` for smooth operation. To stop the bot, press `Ctrl+C`. The code attempts to handle shutdown gracefully; however, you might see a message like "Cannot close a running event loop" during a forced shutdown, which is expected.
+Uses asynchronous programming (`asyncio` and `nest_asyncio`) for smooth operation. To stop Peacy, press `Ctrl+C`. A graceful shutdown is designed, though forced shutdowns might display messages like "Cannot close a running event loop".
 
-## License
-
-This project is licensed under the MIT License.
