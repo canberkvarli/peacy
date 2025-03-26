@@ -1,15 +1,17 @@
-import nest_asyncio
+import logging
+# Suppress noisy logs from SentenceTransformers
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 
-from text_analysis import analyze_sentiment, extract_location, extract_person_name
+import nest_asyncio
 nest_asyncio.apply()
 
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import logging
-import openai
 import asyncio
 import pytz
+import openai
+import spacy
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,11 +21,14 @@ from telegram.ext import (
     filters,
     JobQueue
 )
-import en_core_web_sm
+from rich.console import Console
+from rich.logging import RichHandler
 
 from config import config
+from text_analysis import analyze_sentiment, extract_location, extract_person_name
 
-from memory_manager import add_memory, retrieve_memory, seed_memory_dynamic  # memory management functions
+# Import memory functions and DB helpers; note that memory_manager's expensive init is now deferred.
+from memory_manager import add_memory, retrieve_memory, seed_memory_dynamic, init_memory_manager
 from db_manager import (
     init_db,
     log_message,
@@ -33,32 +38,31 @@ from db_manager import (
     update_conversation_summary_in_db
 )
 from background_tasks import start_scheduler
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.logging import RichHandler
 
-# --- LangChain imports ---
-from langchain_openai import ChatOpenAI
+# --- Define the LangChain prompt template (we delay initializing LLM and memory) ---
 from langchain.prompts import PromptTemplate
-from langchain.memory import ConversationSummaryMemory
 
-# Set up Rich logging for colorful logs.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler()]
+prompt_template = PromptTemplate(
+    input_variables=["conversation_summary", "user_input"],
+    template=(
+        "You are Peacy, a friendly and supportive AI guided by the core values of love, peace, and joy. "
+        "You treat every conversation with care and empathy, remembering personal details like names, locations, and emotional states. "
+        "You never judge or criticize; instead, you listen and help resolve conflicts as a trusted friend. "
+        "Occasionally, use a friendly emoji to add warmth to your responses, but do so sparingly. "
+        "Your replies should be direct, succinct, and focus solely on answering the current query without echoing the internal context. "
+        "Use the context only to maintain continuity and a personal connection.\n\n"
+        "Context (for internal use only): {conversation_summary}\n"
+        "User: {user_input}\n"
+        "Peacy:"
+    )
 )
-logger = logging.getLogger(__name__)
-console = Console()
 
-# Import spaCy for NLP-based entity recognition.
-nlp = en_core_web_sm.load()
+# Globals to be initialized later.
+llm = None
+response_chain = None
+conversation_memory = None
 
-openai.api_key = config.GROQ_API_KEY
-openai.api_base = "https://api.groq.com/openai/v1"
-
-# Define wake words.
+# --- Define wake words ---
 WAKE_WORDS = [
     "peacy", "pc", "peacybot", "peacyai", "peacy-ai",
     "peacy-bot", "peacey", "peaceybot", "peaceyai",
@@ -82,39 +86,7 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.exception(f"Error updating user info: {e}")
 
-# --- Set up LangChain dynamic prompt and memory ---
-prompt_template = PromptTemplate(
-    input_variables=["conversation_summary", "user_input"],
-    template=(
-        "You are Peacy, a friendly and supportive AI guided by the core values of love, peace, and joy. "
-        "You treat every conversation with care and empathy, remembering personal details like names, locations, and emotional states. "
-        "You never judge or criticize; instead, you listen and help resolve conflicts as a trusted friend. "
-        "Occasionally, use a friendly emoji to add warmth to your responses, but do so sparingly. "
-        "Your replies should be direct, succinct, and focus solely on answering the current query without echoing the internal context. "
-        "Use the context only to maintain continuity and a personal connection.\n\n"
-        "Context (for internal use only): {conversation_summary}\n"
-        "User: {user_input}\n"
-        "Peacy:"
-    )
-)
-
-llm = ChatOpenAI(
-    openai_api_base="https://api.groq.com/openai/v1",
-    openai_api_key=config.GROQ_API_KEY,
-    model_name="llama-3.3-70b-versatile",
-    temperature=0.7,
-)
-response_chain = prompt_template | llm
-
-# Initialize dynamic conversation memory.
-conversation_memory = ConversationSummaryMemory(
-    llm=llm,
-    max_token_limit=1024,
-    memory_key="chat_history",
-    return_messages=True,
-    ai_prefix="Peacy",
-)
-
+# --- Response generation using the (to-be-initialized) LangChain components ---
 async def generate_response(user_input: str, conversation_summary: str = "") -> str:
     inputs = {"conversation_summary": conversation_summary, "user_input": user_input}
     try:
@@ -130,6 +102,7 @@ async def generate_response(user_input: str, conversation_summary: str = "") -> 
             logger.exception("Error generating response:")
             return "Sorry, I encountered an error generating a response."
 
+# --- Message handler ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -169,73 +142,92 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(conversation_memory.save_context, {"input": user_message}, {"output": ""})
     dynamic_summary = conversation_memory.load_memory_variables({})["chat_history"]
 
-    # Ensure dynamic_summary is a string.
     if isinstance(dynamic_summary, list):
         dynamic_summary = "\n".join(str(item) for item in dynamic_summary)
 
-    # Retrieve relevant past interactions from the vector store.
     retrieved = retrieve_memory(user_message, n_results=3)
     retrieved_text = f"Relevant past interactions: {retrieved}\n" if retrieved else ""
 
-    # Load the persistent conversation summary from the DB.
-    persistent_summary = get_conversation_summary(chat_id)  # Stored permanently.
+    persistent_summary = get_conversation_summary(chat_id)
 
-    # Combine all pieces into a final conversation summary.
     combined_summary = ""
     if persistent_summary:
         combined_summary += f"Persistent conversation summary: {persistent_summary}\n"
     combined_summary += retrieved_text
     combined_summary += dynamic_summary
 
-    # ALWAYS prepend the current user name from the profile.
     profile = get_user_profile(user_id)
     if profile and profile[0]:
         combined_summary = f"User: {profile[0]}.\n" + combined_summary
 
-    # (Optional) Increase context length to avoid truncating critical info.
-    MAX_CONTEXT_LENGTH = 2048  # Adjust as needed.
+    MAX_CONTEXT_LENGTH = 2048
     if len(combined_summary) > MAX_CONTEXT_LENGTH:
         combined_summary = combined_summary[-MAX_CONTEXT_LENGTH:]
 
     logger.info(f"Conversation summary for response: {combined_summary}")
 
-    # Generate a reply using the cleaned-up summary.
     reply = await generate_response(user_message, combined_summary)
     logger.info(f"Generated reply: {reply}")
 
-    # Send the reply.
     await update.message.reply_text(reply)
     await loop.run_in_executor(None, log_message, chat_id, "Peacy", reply)
     await loop.run_in_executor(None, add_memory, user_message, {"role": "user"})
     await loop.run_in_executor(None, add_memory, reply, {"role": "peacy"})
 
-    # Persist the updated conversation summary to the DB.
     update_conversation_summary_in_db(chat_id, combined_summary)
 
+# --- Main initialization using sequential logging (no spinners) ---
 async def main():
+    global llm, response_chain, conversation_memory
+
     loop = asyncio.get_event_loop()
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("{task.description}"),
-        transient=True,
-        console=console
-    ) as progress:
-        db_task = progress.add_task("[cyan]Initializing PostgreSQL database...", total=None)
-        await loop.run_in_executor(None, init_db)
-        progress.update(db_task, description="[green]Database initialized.[/green]")
+    console = Console()
 
-        seed_task = progress.add_task("[cyan]Seeding memory...", total=None)
-        await loop.run_in_executor(None, seed_memory_dynamic)
-        progress.update(seed_task, description="[green]Memory seeded.[/green]")
+    console.log("[cyan]Initializing PostgreSQL database...[/cyan]")
+    await loop.run_in_executor(None, init_db)
+    console.log("[green]Database initialized.[/green]")
 
-        sched_task = progress.add_task("[cyan]Starting background tasks...", total=None)
-        start_scheduler()  # Runs in its own thread.
-        progress.update(sched_task, description="[green]Background tasks started.[/green]")
+    console.log("[cyan]Loading spaCy model...[/cyan]")
+    # spaCy model is loaded at import time.
+    console.log("[green]spaCy model loaded.[/green]")
 
+    console.log("[cyan]Initializing Memory Manager...[/cyan]")
+    await loop.run_in_executor(None, init_memory_manager)
+    # Removed duplicate log here:
+    # console.log("[green]Memory Manager initialized.[/green]")
+
+    console.log("[cyan]Initializing Language Model and conversation memory...[/cyan]")
+    from langchain_community.chat_models import ChatOpenAI  # delayed import
+    llm = ChatOpenAI(
+        openai_api_base="https://api.groq.com/openai/v1",
+        openai_api_key=config.GROQ_API_KEY,
+        model_name="llama-3.3-70b-versatile",
+        temperature=0.7,
+    )
+    response_chain = prompt_template | llm
+    from langchain.memory import ConversationSummaryMemory
+    conversation_memory = ConversationSummaryMemory(
+        llm=llm,
+        max_token_limit=1024,
+        memory_key="chat_history",
+        return_messages=True,
+        ai_prefix="Peacy",
+    )
+    console.log("[green]Language Model initialized.[/green]")
+
+    console.log("[cyan]Seeding memory...[/cyan]")
+    await loop.run_in_executor(None, seed_memory_dynamic)
+    console.log("[green]Memory seeded.[/green]")
+
+    console.log("[cyan]Starting background tasks...[/cyan]")
+    start_scheduler()  # runs in its own thread
+    console.log("[green]Background tasks started.[/green]")
+
+    # Create a JobQueue for Telegram.
     job_queue = JobQueue()
     job_queue.scheduler._timezone = pytz.utc
 
-    # Use config.TELEGRAM_TOKEN for the token.
+    # Build the Telegram application.
     application = ApplicationBuilder().token(config.TELEGRAM_TOKEN).job_queue(job_queue).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.CHAT_MEMBER))
@@ -244,15 +236,21 @@ async def main():
     await application.run_polling()
 
 if __name__ == '__main__':
-    import sys
+    # Configure logging once at startup.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler()]
+    )
+    logger = logging.getLogger(__name__)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot shutdown gracefully via KeyboardInterrupt.")
-        sys.exit(0)
     except RuntimeError as e:
         if "Cannot close a running event loop" in str(e):
             logger.info("Bot shutdown gracefully.")
-            sys.exit(0)
         else:
             raise
+# --- End Updated bot.py ---

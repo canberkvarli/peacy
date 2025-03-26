@@ -4,7 +4,7 @@ import logging
 import asyncio
 import nest_asyncio
 
-import en_core_web_sm
+import spacy
 
 from rich.console import Console
 from rich.theme import Theme
@@ -17,7 +17,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain.docstore.document import Document
 
-# Import DB helper functions from db_manager (instead of duplicating them here)
+# Import DB helper functions from db_manager
 from db_manager import init_db, log_message, update_user_profile, get_user_profile, get_conversation_summary, update_conversation_summary_in_db
 # Import start_scheduler from background_tasks for standalone execution
 from background_tasks import start_scheduler
@@ -45,20 +45,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load spaCy model.
-nlp = en_core_web_sm.load()
+nlp = spacy.load('en_core_web_sm')
 
-# Initialize the embedding model.
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+# Instead of initializing the embedding model and vector store at import time,
+# declare them as None and provide an initializer function.
+embeddings = None
+vectorstore = None
 
-# Ensure the persistence directory exists.
-os.makedirs(config.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
-
-# Initialize the Chroma vector store.
-vectorstore = Chroma(
-    collection_name="peacy_memories",
-    embedding_function=embeddings,
-    persist_directory=config.CHROMA_PERSIST_DIRECTORY,
-)
+def init_memory_manager():
+    """Initialize the embedding model and Chroma vector store."""
+    global embeddings, vectorstore
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    os.makedirs(config.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
+    vectorstore = Chroma(
+        collection_name="peacy_memories",
+        embedding_function=embeddings,
+        persist_directory=config.CHROMA_PERSIST_DIRECTORY,
+    )
+    logger.info("[bold green]Memory Manager initialized.[/bold green]")
 
 # ------------------------
 # Memory Management Functions
@@ -90,18 +94,11 @@ def seed_memory_dynamic():
     else:
         print("[bold green]Seed memory already exists.[/bold green]")
 
-# ------------------------
-# Main Routine (for standalone execution)
-# ------------------------
 if __name__ == '__main__':
     nest_asyncio.apply()
-
     async def main():
         await asyncio.to_thread(init_db)
-        # Local import of start_scheduler to avoid circular dependency
         start_scheduler()
-        # ... rest of your standalone logic
-
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
