@@ -76,7 +76,7 @@ def analyze_and_learn():
 def start_scheduler():
     console.log("[bold blue]Starting background scheduler...[/bold blue]")
     scheduler = BackgroundScheduler(timezone=pytz.utc)
-    scheduler.add_job(summarize_conversations, 'interval', minutes=30)
-    scheduler.add_job(analyze_and_learn, 'interval', minutes=30)
+    scheduler.add_job(summarize_conversations, 'interval', seconds=10)
+    scheduler.add_job(analyze_and_learn, 'interval', seconds=10)
     scheduler.start()
     console.log("[bold blue]Background scheduler started.[/bold blue]")
