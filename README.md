@@ -34,11 +34,11 @@ Peacy uses Pipenv for dependency management. The following packages are required
 - apscheduler
 - rich
 - python-dotenv
-- langchain
 - nest-asyncio
 - spacy
 - pytz
-- langchain_openai
+- langchain
+- langchain_community
 - langchain-huggingface
 - langchain-chroma
 
@@ -79,7 +79,7 @@ Create a `.env` file in the project root and set the following environment varia
 TELEGRAM_TOKEN=your_telegram_bot_token_here
 GROQ_API_KEY=your_groq_api_key_here
 OPEN_AI_API_KEY=your_open_ai_api_key_here
-PG_CONNECTION_STRING=dbname=peacy_db user=peacy_admin password=admin host=localhost port=5432
+PG_CONNECTION_STRING="your_connection_string_here"
 CHROMA_PERSIST_DIRECTORY=./chroma_db
 PINECONE_API_KEY=your_pinecone_api_key_here # if using Pinecone
 ENV=development
