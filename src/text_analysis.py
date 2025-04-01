@@ -1,39 +1,43 @@
-# text_analysis.py
 import spacy
+from transformers import pipeline
 
 nlp = spacy.load('en_core_web_sm')
 
-# ------------------------
-# Text Analysis Functions
-# ------------------------
+sentiment_analyzer = pipeline(
+    "sentiment-analysis",
+    model="distilbert-base-uncased-finetuned-sst-2-english",
+    revision="714eb0f"
+)
+
 def extract_person_name(text: str) -> str:
-    """Extract a PERSON entity from the text (if any)."""
+    """
+    Dynamically extract a PERSON entity from the text.
+    Returns the last detected PERSON entity.
+    """
     doc = nlp(text)
-    for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            return ent.text
-    return ""
+    persons = [ent.text for ent in doc.ents if ent.label_ == "PERSON"]
+    return persons[-1] if persons else ""
 
 def extract_location(text: str) -> str:
-    """Extract a location entity (GPE or LOC) from the text (if any)."""
+    """
+    Dynamically extract a location (GPE or LOC) from the text.
+    Returns the last detected location.
+    """
     doc = nlp(text)
-    for ent in doc.ents:
-        if ent.label_ in ["GPE", "LOC"]:
-            return ent.text
-    return ""
+    locations = [ent.text for ent in doc.ents if ent.label_ in ["GPE", "LOC"]]
+    return locations[-1] if locations else ""
 
 def analyze_sentiment(text: str) -> str:
     """
-    A simple rule-based sentiment analysis.
-    For a more robust solution, consider a dedicated sentiment library.
+    Analyze sentiment using a transformer-based pipeline.
+    Returns one of 'positive', 'negative', or 'neutral' based on context.
     """
-    positive_words = ["happy", "joy", "excited", "great", "good", "love"]
-    negative_words = ["sad", "angry", "bad", "depressed", "upset", "hate"]
-    pos_count = sum(text.lower().count(word) for word in positive_words)
-    neg_count = sum(text.lower().count(word) for word in negative_words)
-    if pos_count > neg_count:
-        return "positive"
-    elif neg_count > pos_count:
-        return "negative"
-    else:
-        return "neutral"
+    try:
+        result = sentiment_analyzer(text)
+        if result:
+            label = result[0]['label'].lower()
+            return label
+    except Exception:
+        # Fallback in case of an error.
+        pass
+    return "neutral"
